@@ -1,0 +1,6 @@
+recipe-scrapers
+beautifulsoup4
+requests
+notion-client
+python-dotenv
+extruct
