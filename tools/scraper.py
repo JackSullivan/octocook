@@ -141,7 +141,7 @@ def extract_tags(scraper, json_ld: dict | None) -> list[str]:
 def scrape_recipe(url: str) -> RecipeData:
     """Scrape a recipe from the given URL and return structured data."""
     html = fetch_page(url)
-    scraper = scrape_html(html, org_url=url)
+    scraper = scrape_html(html, org_url=url, wild_mode=True)
     json_ld = extract_json_ld_recipe(html)
 
     # Build JSON-LD Recipe object — use the raw one if available,
