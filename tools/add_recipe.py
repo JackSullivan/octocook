@@ -77,6 +77,16 @@ def main():
         action="store_true",
         help="Skip the confirmation prompt and write to Notion immediately.",
     )
+    parser.add_argument(
+        "--photo",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help=(
+            "Image to upload to the Notion page but NOT send to vision parsing "
+            "(e.g. a photo of the finished dish). Repeatable."
+        ),
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -87,6 +97,12 @@ def main():
     if urls and images:
         print(
             "Error: mix of URLs and image paths. Pass either a single URL or only image paths.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if urls and args.photo:
+        print(
+            "Error: --photo is only valid with image-based recipes, not URLs.",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -105,7 +121,7 @@ def main():
             print(f"Error scraping recipe: {e}", file=sys.stderr)
             sys.exit(1)
     else:
-        for p in images:
+        for p in [*images, *args.photo]:
             if not os.path.isfile(p):
                 print(f"Error: not a file: {p}", file=sys.stderr)
                 sys.exit(2)
@@ -119,13 +135,18 @@ def main():
 
         from vision_recipe import parse_recipe_from_images
 
-        print(f"Parsing {len(images)} image(s) with Claude vision...")
+        print(
+            f"Parsing {len(images)} image(s) with Claude vision"
+            + (f" ({len(args.photo)} photo(s) skipped)" if args.photo else "")
+            + "..."
+        )
         try:
             recipe = parse_recipe_from_images(images, source=args.source)
         except Exception as e:
             print(f"Error parsing recipe from images: {e}", file=sys.stderr)
             sys.exit(1)
-        image_paths_for_upload = images
+        # Upload all images to Notion: parsed recipe pages first, then photos.
+        image_paths_for_upload = [*images, *args.photo]
 
     _print_recipe(recipe)
 

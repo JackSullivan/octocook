@@ -19,6 +19,25 @@ _MIME_BY_EXT = {
 }
 
 
+class _Ingredient(BaseModel):
+    line: str = Field(
+        description=(
+            "Full ingredient line exactly as printed, including quantities and "
+            'units (e.g. "2 cups all-purpose flour", "1 tsp kosher salt").'
+        ),
+    )
+    name: str = Field(
+        description=(
+            "Just the ingredient name itself — the food, no quantity, no unit, "
+            "no preparation descriptor. Lowercase. Examples: "
+            '"all-purpose flour", "kosher salt", "puff pastry", "cilantro", '
+            '"unsalted butter". For "1½ cups roughly chopped cilantro" → "cilantro". '
+            'For "1 x 14-oz puff pastry sheet, defrosted" → "puff pastry". '
+            'Drop section headers like "Frosting:" — emit only real ingredients.'
+        ),
+    )
+
+
 class _ParsedRecipe(BaseModel):
     """Structured recipe extracted from cookbook photos."""
 
@@ -35,12 +54,9 @@ class _ParsedRecipe(BaseModel):
         default="",
         description='Total time including resting/cooking, human-readable. Empty if not given.',
     )
-    ingredients: list[str] = Field(
+    ingredients: list[_Ingredient] = Field(
         default_factory=list,
-        description=(
-            "Full ingredient lines exactly as printed, including quantities and units "
-            '(e.g. "2 cups all-purpose flour", "1 tsp kosher salt").'
-        ),
+        description="Each ingredient as both the full printed line and the bare ingredient name.",
     )
     instructions: list[str] = Field(
         default_factory=list,
@@ -104,22 +120,32 @@ def parse_recipe_from_images(
         "text": "Extract the recipe from the image(s) above into the structured format.",
     })
 
-    response = client.messages.parse(
+    # Stream so we can request a larger max_tokens budget — long cookbook
+    # recipes (many spices, many steps) can exceed 16K output tokens, and the
+    # SDK refuses non-streaming requests at that size due to HTTP timeouts.
+    # The streaming helper doesn't surface a parsed result the way
+    # messages.parse() does, so we extract and validate the JSON manually.
+    with client.messages.stream(
         model="claude-sonnet-4-6",
-        max_tokens=8000,
+        max_tokens=32000,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": content}],
         output_format=_ParsedRecipe,
-    )
+    ) as stream:
+        final_message = stream.get_final_message()
 
-    parsed: _ParsedRecipe = response.parsed_output
+    raw_json = next(b.text for b in final_message.content if b.type == "text")
+    parsed = _ParsedRecipe.model_validate_json(raw_json)
+
+    full_lines = [i.line for i in parsed.ingredients]
+    bare_names = [i.name for i in parsed.ingredients if i.name.strip()]
 
     json_ld: dict = {
         "@context": "https://schema.org",
         "@type": "Recipe",
         "name": parsed.title,
         "author": parsed.author,
-        "recipeIngredient": parsed.ingredients,
+        "recipeIngredient": full_lines,
         "recipeInstructions": parsed.instructions,
         "keywords": parsed.tags,
     }
@@ -138,7 +164,7 @@ def parse_recipe_from_images(
         url="",
         prep_time=parsed.prep_time,
         total_time=parsed.total_time,
-        ingredients=parsed.ingredients,
+        ingredients=bare_names,
         tags=sorted({t.strip().lower() for t in parsed.tags if t.strip()}),
         source_site=source,
         json_ld=json_ld,
