@@ -6,3 +6,5 @@ python-dotenv
 extruct
 anthropic
 pydantic
+ortools
+pyyaml

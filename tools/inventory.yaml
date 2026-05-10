@@ -1,0 +1,36 @@
+# Kitchen inventory: tool_name -> count.
+# Anything a recipe needs that is NOT listed here is treated as count=0
+# and triggers a substitution lookup in substitutions.yaml.
+#
+# Edit to match your actual kitchen.
+
+cook: 1              # the human; used for "active" steps. Bump to 2 if cooking with a partner.
+stove_burner: 4
+oven: 1
+microwave: 1
+
+# Pots and pans
+saute_pan: 2
+saucepan: 2
+stockpot: 1
+sheet_pan: 2
+baking_dish: 2
+cast_iron_skillet: 1
+
+# Mixers / blenders
+hand_mixer: 1
+blender: 1
+food_processor: 1
+immersion_blender: 1
+
+# Hand tools
+chef_knife: 1
+cutting_board: 2
+mixing_bowl: 4
+whisk: 1
+spatula: 2
+rolling_pin: 1
+tongs: 1
+colander: 1
+grater: 1
+peeler: 1

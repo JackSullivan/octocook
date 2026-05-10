@@ -5,6 +5,7 @@ import mimetypes
 import os
 
 from notion_client import Client
+from notion_client.helpers import iterate_paginated_api
 
 from scraper import RecipeData
 
@@ -263,3 +264,73 @@ def create_recipe_page(
         client.blocks.children.append(block_id=page["id"], children=children)
 
     return page["url"]
+
+
+def _get_data_source_id(client: Client, db_id: str) -> str:
+    """Resolve a database's primary data source id (Notion 2025-09-03 API)."""
+    db = client.databases.retrieve(database_id=db_id)
+    sources = db.get("data_sources") or []
+    if not sources:
+        raise RuntimeError(
+            f"Database {db_id} has no data sources — cannot query."
+        )
+    return sources[0]["id"]
+
+
+def find_recipe_page(title: str) -> dict:
+    """Look up a recipe page by exact title. Returns the page object."""
+    client = get_client()
+    db_id = get_database_id()
+    data_source_id = _get_data_source_id(client, db_id)
+    result = client.data_sources.query(
+        data_source_id=data_source_id,
+        filter={"property": "Name", "title": {"equals": title}},
+    )
+    matches = result.get("results", [])
+    if not matches:
+        raise LookupError(f"No recipe found with title {title!r}.")
+    if len(matches) > 1:
+        raise LookupError(
+            f"Multiple recipes match {title!r} ({len(matches)} found). "
+            "Use a unique title."
+        )
+    return matches[0]
+
+
+def find_recipe_json_ld_block(page_id: str) -> tuple[str, dict]:
+    """Find the JSON-LD Recipe code block on a page.
+
+    Returns (block_id, parsed_json). Raises LookupError if not found.
+    """
+    client = get_client()
+    for block in iterate_paginated_api(client.blocks.children.list, block_id=page_id):
+        if block.get("type") != "code":
+            continue
+        code = block.get("code", {})
+        if code.get("language") != "json":
+            continue
+        text = "".join(rt.get("text", {}).get("content", "") for rt in code.get("rich_text", []))
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and data.get("@type") == "Recipe":
+            return block["id"], data
+    raise LookupError(f"No JSON-LD Recipe code block found on page {page_id}.")
+
+
+def update_json_ld_block(block_id: str, json_ld: dict) -> None:
+    """Replace the contents of an existing JSON-LD code block in place."""
+    client = get_client()
+    json_str = json.dumps(json_ld, indent=2, ensure_ascii=False)
+    chunks = _chunk_utf16(json_str, 2000)
+    client.blocks.update(
+        block_id=block_id,
+        code={
+            "language": "json",
+            "rich_text": [
+                {"type": "text", "text": {"content": chunk}}
+                for chunk in chunks
+            ],
+        },
+    )
