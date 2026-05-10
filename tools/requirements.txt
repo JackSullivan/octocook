@@ -4,3 +4,5 @@ requests
 notion-client
 python-dotenv
 extruct
+anthropic
+pydantic

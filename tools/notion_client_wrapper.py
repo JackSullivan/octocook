@@ -1,6 +1,7 @@
 """Notion API client for creating recipe rows in the database."""
 
 import json
+import mimetypes
 import os
 
 from notion_client import Client
@@ -137,10 +138,9 @@ def build_properties(recipe: RecipeData) -> dict:
         "select": {"name": "🤷‍♂️"}
     }
 
-    # Link (url)
-    props["Link"] = {
-        "url": recipe.url
-    }
+    # Link (url) — only set when we actually have one (cookbook recipes have none)
+    if recipe.url:
+        props["Link"] = {"url": recipe.url}
 
     # Tags (multi_select)
     if recipe.tags:
@@ -192,8 +192,34 @@ def build_properties(recipe: RecipeData) -> dict:
     return props
 
 
-def create_recipe_page(recipe: RecipeData) -> str:
-    """Create a new page in the Notion recipes database. Returns the page URL."""
+def _upload_file_to_notion(client: Client, path: str) -> str:
+    """Upload a single local file to Notion and return its file_upload id.
+
+    Uses Notion's single-part File Upload API (suitable for files <= 20 MB).
+    """
+    filename = os.path.basename(path)
+    content_type, _ = mimetypes.guess_type(filename)
+    if content_type is None:
+        content_type = "application/octet-stream"
+
+    upload = client.file_uploads.create(mode="single_part", filename=filename)
+    with open(path, "rb") as f:
+        client.file_uploads.send(
+            file_upload_id=upload["id"],
+            file=(filename, f, content_type),
+        )
+    return upload["id"]
+
+
+def create_recipe_page(
+    recipe: RecipeData,
+    image_paths: list[str] | None = None,
+) -> str:
+    """Create a new page in the Notion recipes database. Returns the page URL.
+
+    If image_paths is provided, each image is uploaded to Notion and appended
+    as an image block on the new page (alongside the JSON-LD code block).
+    """
     client = get_client()
     db_id = get_database_id()
     properties = build_properties(recipe)
@@ -204,22 +230,36 @@ def create_recipe_page(recipe: RecipeData) -> str:
         icon={"type": "emoji", "emoji": _pick_icon(recipe)},
     )
 
+    children: list[dict] = []
+
+    if image_paths:
+        for path in image_paths:
+            file_upload_id = _upload_file_to_notion(client, path)
+            children.append({
+                "object": "block",
+                "type": "image",
+                "image": {
+                    "type": "file_upload",
+                    "file_upload": {"id": file_upload_id},
+                },
+            })
+
     if recipe.json_ld:
         json_str = json.dumps(recipe.json_ld, indent=2, ensure_ascii=False)
         chunks = _chunk_utf16(json_str, 2000)
-        client.blocks.children.append(
-            block_id=page["id"],
-            children=[{
-                "object": "block",
-                "type": "code",
-                "code": {
-                    "language": "json",
-                    "rich_text": [
-                        {"type": "text", "text": {"content": chunk}}
-                        for chunk in chunks
-                    ],
-                },
-            }],
-        )
+        children.append({
+            "object": "block",
+            "type": "code",
+            "code": {
+                "language": "json",
+                "rich_text": [
+                    {"type": "text", "text": {"content": chunk}}
+                    for chunk in chunks
+                ],
+            },
+        })
+
+    if children:
+        client.blocks.children.append(block_id=page["id"], children=children)
 
     return page["url"]
