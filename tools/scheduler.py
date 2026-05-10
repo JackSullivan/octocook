@@ -21,6 +21,12 @@ from ortools.sat.python import cp_model
 
 COOK_RESOURCE = "cook"
 
+# Tools whose state persists between adjacent uses (oven temperature, skillet
+# heat) — for these, any two same-recipe steps in a dependency chain must
+# run back-to-back so no other recipe occupies the tool between a preheat
+# and its bake (or between two consecutive bakes that share a preheated state).
+_STATEFUL_TOOLS = frozenset({"oven"})
+
 
 @dataclass
 class Step:
@@ -195,13 +201,40 @@ def solve(
             if dep in ends:
                 model.Add(starts[s.id] >= ends[dep])
 
-    # Group intervals by tool, including the cook for active steps.
+    # Group intervals by tool, including the cook for active steps. Stateful
+    # tools (oven) are handled separately below as per-recipe session intervals
+    # so that one recipe holds the tool from its first to its last use.
     tool_intervals: dict[str, list[cp_model.IntervalVar]] = defaultdict(list)
     for s in resolved:
         for tool in s.tools:
+            if tool in _STATEFUL_TOOLS:
+                continue
             tool_intervals[tool].append(intervals[s.id])
         if s.active:
             tool_intervals[COOK_RESOURCE].append(intervals[s.id])
+
+    # Stateful tools: build one session interval per (recipe, tool) spanning
+    # from the recipe's first use of the tool to its last use. The session
+    # interval is what consumes capacity, so two recipes can never overlap
+    # their oven sessions even if their individual oven steps don't directly
+    # collide. (Prep that happens in parallel with the preheat is fine — the
+    # oven still belongs to that recipe for the duration.)
+    steps_by_tool_recipe: dict[tuple[str, str], list[Step]] = defaultdict(list)
+    for s in resolved:
+        for tool in s.tools:
+            if tool in _STATEFUL_TOOLS:
+                steps_by_tool_recipe[(tool, s.recipe)].append(s)
+
+    for (tool, recipe), recipe_steps in steps_by_tool_recipe.items():
+        sess_start = model.NewIntVar(0, horizon, f"{tool}_sess_start_{recipe}")
+        sess_end = model.NewIntVar(0, horizon, f"{tool}_sess_end_{recipe}")
+        sess_dur = model.NewIntVar(1, horizon, f"{tool}_sess_dur_{recipe}")
+        sess_interval = model.NewIntervalVar(
+            sess_start, sess_dur, sess_end, f"{tool}_sess_{recipe}"
+        )
+        model.AddMinEquality(sess_start, [starts[s.id] for s in recipe_steps])
+        model.AddMaxEquality(sess_end, [ends[s.id] for s in recipe_steps])
+        tool_intervals[tool].append(sess_interval)
 
     for tool, ivs in tool_intervals.items():
         capacity = inventory.counts.get(tool, 0)
@@ -250,6 +283,41 @@ def _format_duration(minutes: int) -> str:
         return f"{minutes}m"
     h, m = divmod(minutes, 60)
     return f"{h}h {m:02d}m" if m else f"{h}h"
+
+
+def schedule_to_dict(schedule: Schedule) -> dict:
+    """Serialize a Schedule into a JSON-friendly dict."""
+    return {
+        "makespan_min": schedule.makespan_min,
+        "makespan_label": _format_duration(schedule.makespan_min),
+        "substitutions": [
+            {
+                "recipe": sub.recipe,
+                "step_id": sub.step_id,
+                "original_tool": sub.original_tool,
+                "substitute_tool": sub.substitute_tool,
+                "time_multiplier": sub.time_multiplier,
+                "note": sub.note,
+            }
+            for sub in schedule.substitutions
+        ],
+        "steps": [
+            {
+                "step_id": s.step.id,
+                "recipe": s.step.recipe,
+                "description": s.step.description,
+                "duration_min": s.step.duration_min,
+                "active": s.step.active,
+                "tools": list(s.step.tools),
+                "depends_on": list(s.step.depends_on),
+                "start_min": s.start_min,
+                "end_min": s.end_min,
+                "start_clock": _format_clock(s.start_min),
+                "end_clock": _format_clock(s.end_min),
+            }
+            for s in schedule.steps
+        ],
+    }
 
 
 def format_schedule(schedule: Schedule) -> str:

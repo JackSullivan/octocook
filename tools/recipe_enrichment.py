@@ -16,7 +16,9 @@ from pydantic import BaseModel, Field
 
 _SYSTEM_PROMPT = """You decompose cooking recipes into structured, schedulable steps.
 
-For each recipe you receive (as a JSON-LD Recipe object), produce an ordered list of atomic steps. Each step must be either FULLY ACTIVE (cook is busy the whole time, e.g. chopping, stirring, sauteing) or FULLY PASSIVE (the tool is occupied but the cook is free, e.g. oven baking, dough rising, simmering covered without stirring). If a single instruction in the recipe mixes both — e.g. "sear, then simmer covered for 20 min" — split it into separate active and passive steps.
+For each recipe you receive (as a JSON-LD Recipe object), produce an ordered list of atomic steps. Each step must be either FULLY ACTIVE (cook is busy the whole time, e.g. chopping, stirring, sauteing) or FULLY PASSIVE (the tool is occupied but the cook is free, e.g. oven baking, dough rising, simmering covered without stirring, OVEN PREHEATING). If a single instruction in the recipe mixes both — e.g. "sear, then simmer covered for 20 min" — split it into separate active and passive steps.
+
+Oven preheats are always PASSIVE — the cook sets the temperature and walks away while the oven warms up. Estimate `duration_min` as the oven's actual warm-up time (typically 10-15 minutes), not the few seconds it takes to press the button.
 
 For each step:
 
@@ -79,6 +81,19 @@ def _load_tool_vocabulary(
     return sorted(vocab)
 
 
+def _normalize_steps(steps: list[dict]) -> list[dict]:
+    """Apply deterministic post-processing to LLM-extracted steps.
+
+    Defensive overrides for known model failure modes — applied even when the
+    prompt covers the same case.
+    """
+    for s in steps:
+        # Preheats are always passive — the oven warms up on its own.
+        if "preheat" in s["description"].lower():
+            s["active"] = False
+    return steps
+
+
 def enrich_recipe(
     recipe_json_ld: dict,
     inventory_path: str | Path = "inventory.yaml",
@@ -107,4 +122,5 @@ def enrich_recipe(
         output_format=_StructuredRecipe,
     )
     parsed: _StructuredRecipe = response.parsed_output
-    return [step.model_dump() for step in parsed.cook_steps]
+    steps = [step.model_dump() for step in parsed.cook_steps]
+    return _normalize_steps(steps)

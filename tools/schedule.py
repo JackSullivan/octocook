@@ -2,6 +2,7 @@
 """CLI: schedule one or more recipes from Notion to minimize total cook time."""
 
 import argparse
+import json
 import re
 import sys
 
@@ -14,6 +15,7 @@ from scheduler import (
     SubstitutionGraph,
     UnsupportedToolError,
     format_schedule,
+    schedule_to_dict,
     solve,
 )
 
@@ -74,6 +76,10 @@ def main():
         "--substitutions", default="substitutions.yaml",
         help="Path to substitutions YAML (default: substitutions.yaml).",
     )
+    parser.add_argument(
+        "--json", default="schedule.json",
+        help='Where to write the structured JSON schedule (default: schedule.json). Pass "-" for stdout.',
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -99,6 +105,16 @@ def main():
         sys.exit(1)
 
     print(format_schedule(schedule))
+
+    payload = schedule_to_dict(schedule)
+    if args.json == "-":
+        print()
+        json.dump(payload, sys.stdout, indent=2, ensure_ascii=False)
+        print()
+    else:
+        with open(args.json, "w") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+        print(f"\nStructured schedule written to: {args.json}")
 
 
 if __name__ == "__main__":
