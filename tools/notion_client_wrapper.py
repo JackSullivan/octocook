@@ -277,6 +277,51 @@ def _get_data_source_id(client: Client, db_id: str) -> str:
     return sources[0]["id"]
 
 
+def _select_name(prop: dict | None) -> str:
+    """Extract the option name from a Notion select property, or empty string."""
+    if not prop:
+        return ""
+    sel = prop.get("select") or {}
+    return sel.get("name", "") or ""
+
+
+def list_recipes() -> list[dict]:
+    """Return every recipe in the database, lightest payload first.
+
+    Each entry: {title, icon, found_in, rating, page_id}. icon is the page
+    emoji if any, else a placeholder.
+    """
+    client = get_client()
+    db_id = get_database_id()
+    data_source_id = _get_data_source_id(client, db_id)
+
+    recipes: list[dict] = []
+    for page in iterate_paginated_api(
+        client.data_sources.query,
+        data_source_id=data_source_id,
+    ):
+        props = page.get("properties", {}) or {}
+        name_prop = props.get("Name", {})
+        title_parts = name_prop.get("title") or []
+        title = "".join(t.get("plain_text", "") for t in title_parts).strip()
+        if not title:
+            continue
+        icon = ""
+        page_icon = page.get("icon") or {}
+        if page_icon.get("type") == "emoji":
+            icon = page_icon.get("emoji", "")
+        recipes.append({
+            "title": title,
+            "icon": icon or "🍽️",
+            "found_in": _select_name(props.get("Found in")),
+            "rating": _select_name(props.get("Rating")),
+            "page_id": page["id"],
+        })
+
+    recipes.sort(key=lambda r: r["title"].lower())
+    return recipes
+
+
 def find_recipe_page(title: str) -> dict:
     """Look up a recipe page by exact title. Returns the page object."""
     client = get_client()
@@ -334,3 +379,29 @@ def update_json_ld_block(block_id: str, json_ld: dict) -> None:
             ],
         },
     )
+
+
+def append_json_ld_block(page_id: str, json_ld: dict) -> str:
+    """Append a fresh JSON-LD Recipe code block to a page. Returns the new block id.
+
+    Used to retro-fit older recipe pages (which lack the JSON-LD body) so the
+    enrichment pipeline can work on them.
+    """
+    client = get_client()
+    json_str = json.dumps(json_ld, indent=2, ensure_ascii=False)
+    chunks = _chunk_utf16(json_str, 2000)
+    response = client.blocks.children.append(
+        block_id=page_id,
+        children=[{
+            "object": "block",
+            "type": "code",
+            "code": {
+                "language": "json",
+                "rich_text": [
+                    {"type": "text", "text": {"content": chunk}}
+                    for chunk in chunks
+                ],
+            },
+        }],
+    )
+    return response["results"][0]["id"]

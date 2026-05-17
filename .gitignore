@@ -1,0 +1,22 @@
+# Secrets and env files
+.env
+.env.*
+!.env.example
+*.env~
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# SQLite databases (session-local state)
+*.db
+*.db-journal
+
+# Editor / OS
+.DS_Store
+*.swp
+*~
+
+# Build artifacts handled per-project (web/ has its own .gitignore)

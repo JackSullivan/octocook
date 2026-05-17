@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+# Backend reuses tools/ modules directly; their deps are listed in tools/requirements.txt.
+# Install both: pip install -r tools/requirements.txt -r server/requirements.txt

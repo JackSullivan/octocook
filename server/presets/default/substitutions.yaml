@@ -1,0 +1,62 @@
+# Tool substitution graph.
+#
+# When a recipe step requires a tool that is not in inventory.yaml,
+# the scheduler walks the chain below for that tool and uses the FIRST
+# substitute whose tool IS in inventory (count > 0). The step's duration
+# is multiplied by `time_multiplier` and `note` is shown in the schedule.
+#
+# `tool: null` means "do it by hand" (no tool reservation).
+#
+# Substitutes are tried in order — put the closest match first.
+
+stand_mixer:
+  - tool: hand_mixer
+    time_multiplier: 1.2
+    note: "Use hand mixer instead of stand mixer"
+  - tool: null
+    time_multiplier: 1.5
+    note: "Mix/knead by hand"
+
+food_processor:
+  - tool: blender
+    time_multiplier: 1.0
+    note: "Use blender (scrape sides as needed)"
+  - tool: chef_knife
+    time_multiplier: 3.0
+    note: "Chop by hand"
+
+immersion_blender:
+  - tool: blender
+    time_multiplier: 1.0
+    note: "Use countertop blender (transfer in batches)"
+  - tool: potato_masher
+    time_multiplier: 1.5
+    note: "Mash by hand"
+
+microwave:
+  - tool: stove_burner
+    time_multiplier: 1.5
+    note: "Warm on the stovetop instead of microwave"
+
+mortar_and_pestle:
+  - tool: food_processor
+    time_multiplier: 0.5
+    note: "Pulse in food processor"
+  - tool: chef_knife
+    time_multiplier: 1.5
+    note: "Chop fine and crush with knife side"
+
+dutch_oven:
+  - tool: stockpot
+    time_multiplier: 1.0
+    note: "Use stockpot (oven steps may need a baking dish instead)"
+
+cast_iron_skillet:
+  - tool: saute_pan
+    time_multiplier: 1.0
+    note: "Use saute pan (less heat retention)"
+
+rolling_pin:
+  - tool: null
+    time_multiplier: 1.2
+    note: "Roll with a wine bottle or press by hand"

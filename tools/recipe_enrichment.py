@@ -28,6 +28,7 @@ For each step:
 - `active`: true if the cook must be present and working the whole time; false if the cook can walk away (oven, fridge, rising, simmering covered).
 - `tools`: list of tool names this step occupies. Use the controlled vocabulary listed below when possible. Omit the cook from this list — the scheduler infers it from `active`. Tools that are essentially always available (spatula, tongs, measuring cups) can be omitted unless they're a real bottleneck.
 - `depends_on`: list of step ids that must finish before this step starts. Most steps just depend on the previous one, but you may have parallel preparation (e.g. chopping while water heats).
+- `ingredients`: list of ingredient lines this step uses, copied VERBATIM from the recipe's `recipeIngredient` list (with quantities and units exactly as printed, e.g. "1 large onion, diced", "4 cloves garlic, minced"). Attach each ingredient to the step where it's FIRST prepped or measured — typically a chopping, measuring, or mixing step. A later step that combines or cooks already-prepped ingredients should have an empty `ingredients` list (don't repeat them). Technique-only steps (preheating, kneading, baking, resting) also use an empty list. Every ingredient from `recipeIngredient` should appear in exactly one step's list.
 
 Be realistic about parallelism: if a step requires the cook's attention but the previous step was passive (e.g. oven baking), the new step does NOT depend on the bake — they can overlap (the cook works while the oven bakes).
 
@@ -52,6 +53,13 @@ class _StructuredStep(BaseModel):
     depends_on: list[str] = Field(
         default_factory=list,
         description="Step ids within the same recipe that must finish first.",
+    )
+    ingredients: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Ingredient lines copied verbatim from recipeIngredient that this step "
+            "introduces. Empty for technique-only or combine steps."
+        ),
     )
 
 
