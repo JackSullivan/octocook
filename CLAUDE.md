@@ -39,6 +39,58 @@ cd web && npm run dev
 
 Then open http://localhost:5173. Recipes must already exist in Notion *and* be enriched (`cookSteps` present in their JSON-LD code block) — pick recipes that have been processed by `enrich_recipe.py`.
 
+## Running on Android (Capacitor)
+
+The web app is wrapped with Capacitor (`web/capacitor.config.ts`, `web/android/`) for installation on a phone on the same Wi-Fi as the laptop. The phone loads the UI from the Vite dev server and hits the FastAPI backend directly — no hosted backend.
+
+**One-time setup**
+
+1. Install Android Studio: `brew install --cask android-studio`. On first launch, complete the setup wizard (installs Android SDK + platform tools + an SDK Platform target, e.g. API 35).
+2. JDK: use Android Studio's bundled JBR. Add to your shell rc:
+   ```bash
+   export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+   export ANDROID_HOME="$HOME/Library/Android/sdk"
+   export PATH="$PATH:$ANDROID_HOME/platform-tools"
+   ```
+3. On the phone: Settings → About phone → tap Build number 7× to unlock Developer Options → enable **USB debugging**. Plug in via USB and accept the RSA fingerprint prompt. Verify with `adb devices`.
+4. In `web/.env.local` (gitignored) set the API base to your laptop's LAN IP (`ipconfig getifaddr en0`):
+   ```
+   VITE_API_BASE_URL=http://192.168.0.196:8000
+   ```
+
+**Dev loop (live reload)**
+
+```bash
+# terminal 1 — backend, bound to the LAN so the phone can reach it
+cd server && ../.venv/bin/uvicorn app:app --reload --port 8000 --host 0.0.0.0
+
+# terminal 2 — vite (already listens on 0.0.0.0 via server.host: true)
+cd web && npm run dev
+
+# terminal 3 — sync the LAN dev URL into Capacitor + install on the phone
+cd web
+CAPACITOR_DEV_SERVER_URL=http://192.168.0.196:5173 npm run android:sync
+npm run android:run
+```
+
+`CAPACITOR_DEV_SERVER_URL` is read by `capacitor.config.ts`; when set, the APK loads from that URL (live reload) instead of bundled assets. Code changes in `web/src/` hot-reload on the phone.
+
+**Standalone APK (no Vite running)**
+
+```bash
+cd web
+npm run build              # bakes VITE_API_BASE_URL into the bundle
+npm run android:sync       # no CAPACITOR_DEV_SERVER_URL → uses web/dist/
+npm run android:run
+```
+
+The phone still needs the backend reachable on the LAN — there's no embedded backend.
+
+**Notes**
+
+- `androidScheme: 'http'` + `cleartext: true` in `capacitor.config.ts` let the app talk to plain-HTTP backends. Fine for the home network; revisit if this ever leaves the LAN.
+- The Android project lives in `web/android/`. It's checked in (Capacitor regenerates if missing), but build artifacts inside (`build/`, `.gradle/`, `local.properties`) are handled by `web/android/.gitignore`.
+
 ## Three-stage pipeline
 
 The system is a sequence of three CLIs, each writing back into the recipe's Notion page:

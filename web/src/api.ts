@@ -1,6 +1,10 @@
 import type { RecipeOut, Schedule, Session } from './types'
 
-const base = '/api'
+// Default to /api so the browser dev proxy (and same-origin production) keep
+// working unchanged. For the Capacitor/Android build, set
+// VITE_API_BASE_URL=http://<laptop-lan-ip>:8000 in web/.env.local so the
+// phone hits the FastAPI backend on your laptop directly.
+const base = import.meta.env.VITE_API_BASE_URL ?? '/api'
 
 async function json<T>(r: Response): Promise<T> {
   if (!r.ok) {
