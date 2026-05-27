@@ -2,14 +2,18 @@
 
 Exposes recipe selection, kitchen presets, scheduling, and per-step
 progress endpoints over the existing tools/ Python modules (scheduler,
-notion_client_wrapper) and a small SQLite store.
+recipe_backend) and a small SQLite store.
 
 Run:
     cd server && ../.venv/bin/uvicorn app:app --reload --port 8000
+
+Set OCTOCOOK_BACKEND=sqlite in tools/.env (or the environment) to use
+the local SQLite recipe store instead of Notion.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -19,20 +23,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-# Make tools/ importable so we can reuse scheduler + Notion client without copying.
+# Make tools/ importable so we can reuse scheduler + backends without copying.
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "tools"))
 
 load_dotenv(_ROOT / "tools" / ".env")
 
-from notion_client_wrapper import (  # noqa: E402
-    append_json_ld_block,
-    find_recipe_json_ld_block,
-    get_client,
-    list_recipes,
-    update_json_ld_block,
-)
-from recipe_enrichment import enrich_recipe as run_enrichment  # noqa: E402
+from recipe_backend import RecipeBackend, get_backend  # noqa: E402
 from scraper import scrape_recipe  # noqa: E402
 from scheduler import (  # noqa: E402
     Inventory,
@@ -42,10 +39,13 @@ from scheduler import (  # noqa: E402
     schedule_to_dict,
     solve,
 )
+from recipe_enrichment import enrich_recipe as run_enrichment  # noqa: E402
 
 import db  # noqa: E402
 import presets  # noqa: E402
 
+_backend: RecipeBackend = get_backend()
+_BACKEND_NAME = os.environ.get("OCTOCOOK_BACKEND", "notion").lower()
 
 app = FastAPI(title="Octocook API")
 
@@ -68,55 +68,25 @@ def _slugify(name: str) -> str:
     return s or "recipe"
 
 
-def _fetch_recipe_page(page_id: str) -> tuple[dict, str, str, str, dict | None, str | None]:
-    """Return (page, title, icon, block_id, json_ld, error) for a recipe.
-
-    If the page is missing or has no title, raises HTTPException.
-    If the JSON-LD block is missing, returns it as None.
-    """
-    client = get_client()
+def _load_recipe_steps(recipe_id: str) -> tuple[list[Step], str, str, bool]:
+    """Return (steps, title, icon, enriched). When not enriched, steps is empty."""
     try:
-        page = client.pages.retrieve(page_id=page_id)
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Recipe not found: {e}")
-
-    name_prop = page.get("properties", {}).get("Name", {})
-    title_parts = name_prop.get("title") or []
-    title = "".join(t.get("plain_text", "") for t in title_parts).strip()
-    if not title:
-        raise HTTPException(status_code=400, detail=f"Recipe page {page_id} has no title.")
-
-    icon = ""
-    page_icon = page.get("icon") or {}
-    if page_icon.get("type") == "emoji":
-        icon = page_icon.get("emoji", "")
-    icon = icon or "🍽️"
-
-    try:
-        block_id, json_ld = find_recipe_json_ld_block(page_id)
-        return page, title, icon, block_id, json_ld, None
+        meta = _backend.get_recipe_metadata(recipe_id)
     except LookupError as e:
-        return page, title, icon, "", None, str(e)
+        raise HTTPException(status_code=404, detail=str(e))
 
+    title, icon = meta["title"], meta["icon"]
 
-def _load_recipe_steps(page_id: str) -> tuple[list[Step], str, str, bool]:
-    """Return (steps, title, icon, enriched). When not enriched, steps is empty.
-
-    Step ids are namespaced with both the title slug AND a short page-id
-    suffix so two recipes sharing a title (e.g. multiple "Banana Bread"
-    pages) don't produce colliding step ids in a joint schedule.
-    """
-    _, title, icon, _, json_ld, err = _fetch_recipe_page(page_id)
-    if err is not None or json_ld is None:
-        # No JSON-LD block at all — treat as unenriched so the caller can
-        # surface the enrichment flow.
+    try:
+        json_ld = _backend.get_recipe_json_ld(recipe_id)
+    except LookupError:
         return [], title, icon, False
 
     cook_steps = json_ld.get("cookSteps")
     if not cook_steps:
         return [], title, icon, False
 
-    short_id = page_id.replace("-", "")[:8]
+    short_id = recipe_id.replace("-", "")[:8]
     slug = f"{_slugify(title)}_{short_id}"
     steps = [
         Step(
@@ -142,6 +112,21 @@ class RecipeOut(BaseModel):
     icon: str
     found_in: str = ""
     rating: str = ""
+
+
+class RecipeDetail(BaseModel):
+    id: str
+    title: str
+    icon: str
+    found_in: str = ""
+    rating: str = ""
+    ingredients: list[str] = []
+    step_count: int = 0
+    enriched: bool = False
+
+
+class IngestIn(BaseModel):
+    url: str
 
 
 class KitchenOut(BaseModel):
@@ -175,21 +160,144 @@ class StepDoneIn(BaseModel):
 
 # ----- Routes -----
 
+@app.get("/config")
+def get_config() -> dict:
+    return {"backend": _BACKEND_NAME}
+
+
 @app.get("/recipes", response_model=list[RecipeOut])
 def get_recipes() -> list[RecipeOut]:
     try:
         return [
             RecipeOut(
-                id=r["page_id"],
+                id=r["id"],
                 title=r["title"],
                 icon=r["icon"],
                 found_in=r.get("found_in", ""),
                 rating=r.get("rating", ""),
             )
-            for r in list_recipes()
+            for r in _backend.list_recipes()
         ]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Notion lookup failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Recipe lookup failed: {e}")
+
+
+@app.get("/recipes/{recipe_id}", response_model=RecipeDetail)
+def get_recipe_detail(recipe_id: str) -> RecipeDetail:
+    try:
+        meta = _backend.get_recipe_metadata(recipe_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    ingredients: list[str] = []
+    step_count = 0
+    enriched = False
+
+    try:
+        json_ld = _backend.get_recipe_json_ld(recipe_id)
+        ingredients = json_ld.get("recipeIngredient", [])
+        cook_steps = json_ld.get("cookSteps", [])
+        step_count = len(cook_steps)
+        enriched = bool(cook_steps)
+    except LookupError:
+        pass
+
+    return RecipeDetail(
+        id=recipe_id,
+        title=meta["title"],
+        icon=meta["icon"],
+        found_in=meta.get("found_in", ""),
+        rating=meta.get("rating", ""),
+        ingredients=ingredients,
+        step_count=step_count,
+        enriched=enriched,
+    )
+
+
+@app.post("/recipes/ingest", response_model=RecipeOut)
+def post_ingest_recipe(body: IngestIn) -> RecipeOut:
+    if _BACKEND_NAME != "sqlite":
+        raise HTTPException(
+            status_code=400,
+            detail="Recipe ingestion via the API is only available in SQLite mode. "
+                   "Use tools/add_recipe.py for Notion-backed ingestion.",
+        )
+    try:
+        recipe_data = scrape_recipe(body.url)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Could not scrape URL: {e}")
+
+    try:
+        location = _backend.create_recipe(recipe_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save recipe: {e}")
+
+    recipe_id = location.removeprefix("sqlite:")
+    try:
+        meta = _backend.get_recipe_metadata(recipe_id)
+    except LookupError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return RecipeOut(
+        id=recipe_id,
+        title=meta["title"],
+        icon=meta["icon"],
+        found_in=meta.get("found_in", ""),
+        rating=meta.get("rating", ""),
+    )
+
+
+@app.post("/recipes/{recipe_id}/enrich")
+def post_enrich_recipe(recipe_id: str) -> dict:
+    """Run cookSteps enrichment for a recipe and write the result back.
+
+    If the recipe has no JSON-LD content yet, attempts to recover by scraping
+    the recipe's source URL (if available) and embedding the JSON-LD first.
+    """
+    try:
+        meta = _backend.get_recipe_metadata(recipe_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    title = meta["title"]
+
+    try:
+        json_ld = _backend.get_recipe_json_ld(recipe_id)
+    except LookupError:
+        source_url = meta.get("source_url")
+        if not source_url:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Recipe {title!r} has no recipe content and no source URL to "
+                    "scrape. Re-add it via tools/add_recipe.py."
+                ),
+            )
+        try:
+            recipe_data = scrape_recipe(source_url)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Couldn't scrape source URL {source_url}: {e}",
+            )
+        json_ld = recipe_data.json_ld
+        _backend.append_recipe_json_ld(recipe_id, json_ld)
+
+    inv_path = _ROOT / "tools" / "inventory.yaml"
+    subs_path = _ROOT / "tools" / "substitutions.yaml"
+
+    try:
+        cook_steps = run_enrichment(
+            json_ld,
+            inventory_path=inv_path,
+            substitutions_path=subs_path,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Enrichment failed: {e}")
+
+    json_ld["cookSteps"] = cook_steps
+    _backend.update_recipe_json_ld(recipe_id, json_ld)
+    return {"title": title, "step_count": len(cook_steps)}
 
 
 @app.get("/kitchens", response_model=list[KitchenOut])
@@ -255,10 +363,10 @@ def post_session(body: CreateSessionIn) -> dict:
     icons: dict[str, str] = {}
     titles: list[str] = []
     unenriched: list[dict] = []
-    for page_id in body.recipe_ids:
-        steps, title, icon, enriched = _load_recipe_steps(page_id)
+    for recipe_id in body.recipe_ids:
+        steps, title, icon, enriched = _load_recipe_steps(recipe_id)
         if not enriched:
-            unenriched.append({"id": page_id, "title": title})
+            unenriched.append({"id": recipe_id, "title": title})
             continue
         all_steps.extend(steps)
         icons[title] = icon
@@ -299,57 +407,6 @@ def get_session(session_id: str) -> dict:
     if sess is None:
         raise HTTPException(status_code=404, detail="Session not found.")
     return sess
-
-
-@app.post("/recipes/{page_id}/enrich")
-def post_enrich_recipe(page_id: str) -> dict:
-    """Run cookSteps enrichment for a recipe and write the result back to Notion.
-
-    If the recipe page has no JSON-LD code block yet (older recipes that
-    predate the structured-body workflow), we attempt to recover by scraping
-    the page's `Link` URL and embedding the JSON-LD before enriching.
-    """
-    page, title, _, block_id, json_ld, err = _fetch_recipe_page(page_id)
-
-    if err is not None or json_ld is None:
-        # No JSON-LD block. Look for a Link property to scrape.
-        link_prop = page.get("properties", {}).get("Link", {}) or {}
-        url = link_prop.get("url")
-        if not url:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Recipe {title!r} has no recipe content on the Notion page and "
-                    "no source URL to scrape. Re-add it via tools/add_recipe.py."
-                ),
-            )
-        try:
-            recipe_data = scrape_recipe(url)
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Couldn't scrape source URL {url}: {e}",
-            )
-        json_ld = recipe_data.json_ld
-        block_id = append_json_ld_block(page_id, json_ld)
-
-    # Use the default kitchen preset for the tool vocabulary — it's the most
-    # comprehensive list and matches what the CLI does today.
-    inv_path = _ROOT / "tools" / "inventory.yaml"
-    subs_path = _ROOT / "tools" / "substitutions.yaml"
-
-    try:
-        cook_steps = run_enrichment(
-            json_ld,
-            inventory_path=inv_path,
-            substitutions_path=subs_path,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Enrichment failed: {e}")
-
-    json_ld["cookSteps"] = cook_steps
-    update_json_ld_block(block_id, json_ld)
-    return {"title": title, "step_count": len(cook_steps)}
 
 
 @app.post("/sessions/{session_id}/steps/{step_id}/start")

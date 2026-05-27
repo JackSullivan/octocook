@@ -40,6 +40,17 @@ export interface Substitution {
   note: string
 }
 
+export interface RecipeDetail {
+  id: string
+  title: string
+  icon: string
+  found_in: string
+  rating: string
+  ingredients: string[]
+  step_count: number
+  enriched: boolean
+}
+
 export interface StepState {
   started_at: string | null
   completed_at: string | null

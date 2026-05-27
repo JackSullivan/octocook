@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { getConfig } from './api'
 import { Setup } from './Setup'
 import { CookView } from './CookView'
 import { KitchenManager } from './KitchenManager'
@@ -9,9 +10,14 @@ type View = 'setup' | 'kitchens'
 export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [view, setView] = useState<View>('setup')
-  // Bumped whenever we return from the kitchen manager so Setup re-fetches
-  // the kitchen list without losing any in-progress recipe selection.
   const [kitchensVersion, setKitchensVersion] = useState(0)
+  const [backend, setBackend] = useState<string>('notion')
+
+  useEffect(() => {
+    getConfig()
+      .then((c) => setBackend(c.backend))
+      .catch(() => { /* fall back to 'notion' default */ })
+  }, [])
 
   if (sessionId) {
     return <CookView sessionId={sessionId} onExit={() => setSessionId(null)} />
@@ -31,6 +37,7 @@ export default function App() {
       onCreated={setSessionId}
       onManageKitchens={() => setView('kitchens')}
       kitchensVersion={kitchensVersion}
+      backend={backend}
     />
   )
 }

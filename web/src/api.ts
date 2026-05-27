@@ -1,4 +1,4 @@
-import type { RecipeOut, Schedule, Session } from './types'
+import type { RecipeDetail, RecipeOut, Schedule, Session } from './types'
 
 // Default to /api so the browser dev proxy (and same-origin production) keep
 // working unchanged. For the Capacitor/Android build, set
@@ -14,8 +14,26 @@ async function json<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>
 }
 
+export async function getConfig(): Promise<{ backend: string }> {
+  return json(await fetch(`${base}/config`))
+}
+
 export async function listRecipes(): Promise<RecipeOut[]> {
   return json(await fetch(`${base}/recipes`))
+}
+
+export async function getRecipeDetail(id: string): Promise<RecipeDetail> {
+  return json(await fetch(`${base}/recipes/${encodeURIComponent(id)}`))
+}
+
+export async function ingestRecipe(url: string): Promise<RecipeOut> {
+  return json(
+    await fetch(`${base}/recipes/ingest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+    }),
+  )
 }
 
 export async function listKitchens(): Promise<{ name: string }[]> {

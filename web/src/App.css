@@ -699,3 +699,115 @@ button.danger {
   font-weight: 600;
   color: var(--accent);
 }
+
+/* ---------- Recipe card detail button ---------- */
+
+.detail-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 0.95rem;
+  color: var(--muted);
+  line-height: 1;
+  opacity: 0.6;
+  transition: opacity 80ms ease;
+}
+.recipe-card:hover .detail-btn,
+.detail-btn:hover { opacity: 1; }
+
+/* ---------- Add-recipe ingest panel ---------- */
+
+.ingest-panel {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+.ingest-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.6rem;
+}
+.ingest-form input[type="url"] {
+  flex: 1;
+  min-width: 200px;
+}
+.ingest-success {
+  color: #16a34a;
+  margin: 0;
+  font-size: 0.85rem;
+  width: 100%;
+}
+
+/* ---------- Recipe detail modal ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 1rem;
+}
+.modal {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.25rem 1.4rem 1.5rem;
+  max-width: 480px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  position: relative;
+}
+.modal-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.85rem;
+  background: transparent;
+  border: none;
+  font-size: 1rem;
+  color: var(--muted);
+  padding: 0.2rem 0.4rem;
+}
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.modal-icon { font-size: 2.2rem; line-height: 1; flex-shrink: 0; }
+.modal-header h2 { margin: 0; font-size: 1.15rem; }
+.modal-header p { margin: 0.2rem 0 0; font-size: 0.85rem; }
+.modal-meta {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.badge {
+  font-size: 0.78rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.badge-ok { background: #dcfce7; color: #15803d; }
+.badge-warn { background: var(--past); color: var(--muted); }
+@media (prefers-color-scheme: dark) {
+  .badge-ok { background: #14532d; color: #86efac; }
+  .ingest-success { color: #4ade80; }
+}
+.modal-ingredients h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+.modal-ingredients ul {
+  list-style: disc;
+  margin: 0;
+  padding-left: 1.25rem;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--fg);
+}

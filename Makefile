@@ -1,17 +1,21 @@
-PYTHON := python3.12
-VENV   := .venv
-PIP    := $(VENV)/bin/pip
+# Python / Node / SQLite are provided by the Nix dev shell (flake.nix).
+# Enter it with: nix develop
+# Then run any make target as normal.
+PYTHON  ?= python3
+VENV    := .venv
+PIP     := $(VENV)/bin/pip
 UVICORN := $(VENV)/bin/uvicorn
 
 .PHONY: help setup install install-py install-web env backend frontend dev android-sync android-run
 
 help:
 	@echo "Usage:"
+	@echo "  nix develop       — enter dev shell (Python 3.12, Node 22, SQLite)"
 	@echo "  make setup        — create venv, install all deps, copy .env if missing"
 	@echo "  make backend      — run FastAPI server on :8000 (requires setup)"
 	@echo "  make frontend     — run Vite dev server on :5173 (requires setup)"
 	@echo "  make dev          — run backend + frontend concurrently"
-	@echo "  make android-sync — sync Capacitor + push to connected Android device"
+	@echo "  make android-sync — sync Capacitor + push to connected Android device (LANIP=...)"
 	@echo "  make android-run  — run app on connected Android device"
 
 # ── Setup ─────────────────────────────────────────────────────────────────────

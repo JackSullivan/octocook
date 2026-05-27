@@ -11,7 +11,7 @@ import sys
 from dotenv import load_dotenv
 
 from scraper import RecipeData, scrape_recipe
-from notion_client_wrapper import create_recipe_page
+from recipe_backend import get_backend
 
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
@@ -44,7 +44,7 @@ def _print_recipe(recipe: RecipeData) -> None:
 
 def _confirm() -> bool:
     try:
-        answer = input("Create Notion page? [y/N]: ").strip().lower()
+        answer = input("Save recipe? [y/N]: ").strip().lower()
     except EOFError:
         return False
     return answer in ("y", "yes")
@@ -151,21 +151,22 @@ def main():
     _print_recipe(recipe)
 
     if args.dry_run:
-        print("Dry run — skipping Notion row creation.")
+        print("Dry run — skipping recipe creation.")
         return
 
     if not args.yes and not _confirm():
-        print("Aborted — no Notion page created.")
+        print("Aborted — recipe not saved.")
         return
 
-    print("Creating Notion row...")
+    backend = get_backend()
+    print("Saving recipe...")
     try:
-        page_url = create_recipe_page(recipe, image_paths=image_paths_for_upload or None)
+        location = backend.create_recipe(recipe, image_paths=image_paths_for_upload or None)
     except Exception as e:
-        print(f"Error creating Notion page: {e}", file=sys.stderr)
+        print(f"Error saving recipe: {e}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Done! Notion page: {page_url}")
+    print(f"Done! Recipe: {location}")
 
 
 if __name__ == "__main__":

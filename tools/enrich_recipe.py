@@ -7,11 +7,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from notion_client_wrapper import (
-    find_recipe_json_ld_block,
-    find_recipe_page,
-    update_json_ld_block,
-)
+from recipe_backend import get_backend
 from recipe_enrichment import enrich_recipe
 
 
@@ -48,10 +44,12 @@ def main():
 
     load_dotenv()
 
+    backend = get_backend()
+
     print(f"Looking up recipe: {args.title}")
     try:
-        page = find_recipe_page(args.title)
-        block_id, json_ld = find_recipe_json_ld_block(page["id"])
+        page = backend.find_recipe(args.title)
+        json_ld = backend.get_recipe_json_ld(page["id"])
     except LookupError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -92,17 +90,17 @@ def main():
 
     if not args.yes:
         try:
-            answer = input("\nWrite these cookSteps to Notion? [y/N]: ").strip().lower()
+            answer = input("\nWrite these cookSteps? [y/N]: ").strip().lower()
         except EOFError:
             answer = ""
         if answer not in ("y", "yes"):
-            print("Aborted — Notion not modified.")
+            print("Aborted — recipe not modified.")
             return
 
     json_ld["cookSteps"] = cook_steps
-    print("Updating Notion JSON-LD block...")
-    update_json_ld_block(block_id, json_ld)
-    print(f"Done! Page: {page['url']}")
+    print("Updating recipe JSON-LD...")
+    backend.update_recipe_json_ld(page["id"], json_ld)
+    print("Done!")
 
 
 if __name__ == "__main__":

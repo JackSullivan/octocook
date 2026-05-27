@@ -8,7 +8,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from notion_client_wrapper import find_recipe_json_ld_block, find_recipe_page
+from recipe_backend import get_backend
 from scheduler import (
     Inventory,
     Step,
@@ -26,14 +26,14 @@ def _slugify(name: str) -> str:
     return s or "recipe"
 
 
-def _load_recipe_steps(title: str) -> list[Step]:
-    """Fetch a recipe from Notion and return its cookSteps as Step objects.
+def _load_recipe_steps(title: str, backend) -> list[Step]:
+    """Fetch a recipe and return its cookSteps as Step objects.
 
     Step ids are namespaced with a recipe slug so they're globally unique
     across the joint schedule.
     """
-    page = find_recipe_page(title)
-    _, json_ld = find_recipe_json_ld_block(page["id"])
+    page = backend.find_recipe(title)
+    json_ld = backend.get_recipe_json_ld(page["id"])
     cook_steps = json_ld.get("cookSteps")
     if not cook_steps:
         raise RuntimeError(
@@ -84,11 +84,13 @@ def main():
 
     load_dotenv()
 
+    backend = get_backend()
+
     all_steps: list[Step] = []
     for title in args.titles:
         print(f"Loading: {title}")
         try:
-            all_steps.extend(_load_recipe_steps(title))
+            all_steps.extend(_load_recipe_steps(title, backend))
         except (LookupError, RuntimeError) as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)

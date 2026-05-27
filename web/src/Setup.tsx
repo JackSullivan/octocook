@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { createSession, enrichRecipe, listKitchens, listRecipes } from './api'
-import type { RecipeOut } from './types'
+import { createSession, enrichRecipe, getRecipeDetail, ingestRecipe, listKitchens, listRecipes } from './api'
+import type { RecipeDetail, RecipeOut } from './types'
 import { Logo } from './Logo'
 
 interface Unenriched {
@@ -12,9 +12,10 @@ interface Props {
   onCreated: (sessionId: string) => void
   onManageKitchens: () => void
   kitchensVersion: number
+  backend: string
 }
 
-export function Setup({ onCreated, onManageKitchens, kitchensVersion }: Props) {
+export function Setup({ onCreated, onManageKitchens, kitchensVersion, backend }: Props) {
   const [recipes, setRecipes] = useState<RecipeOut[] | null>(null)
   const [kitchens, setKitchens] = useState<string[] | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -26,6 +27,17 @@ export function Setup({ onCreated, onManageKitchens, kitchensVersion }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [needsEnrichment, setNeedsEnrichment] = useState<Unenriched[]>([])
   const [enriching, setEnriching] = useState<Set<string>>(new Set())
+
+  // Recipe detail modal
+  const [detailId, setDetailId] = useState<string | null>(null)
+  const [detail, setDetail] = useState<RecipeDetail | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+
+  // Add-recipe panel (sqlite mode only)
+  const [ingestOpen, setIngestOpen] = useState(false)
+  const [ingestUrl, setIngestUrl] = useState('')
+  const [ingestStatus, setIngestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [ingestError, setIngestError] = useState<string | null>(null)
 
   // Recipes are heavy to fetch — only on mount.
   useEffect(() => {
@@ -47,6 +59,17 @@ export function Setup({ onCreated, onManageKitchens, kitchensVersion }: Props) {
       })
       .catch((e) => setError(String(e.message ?? e)))
   }, [kitchensVersion])
+
+  // Load detail when a recipe card's ⓘ is clicked.
+  useEffect(() => {
+    if (detailId === null) { setDetail(null); return }
+    setDetailLoading(true)
+    setDetail(null)
+    getRecipeDetail(detailId)
+      .then(setDetail)
+      .catch(() => setDetail(null))
+      .finally(() => setDetailLoading(false))
+  }, [detailId])
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -133,6 +156,22 @@ export function Setup({ onCreated, onManageKitchens, kitchensVersion }: Props) {
     // Run serially so we don't hammer the Claude API with parallel calls.
     for (const id of ids) {
       if (!enriching.has(id)) await handleEnrich(id)
+    }
+  }
+
+  const handleIngest = async () => {
+    if (!ingestUrl.trim()) return
+    setIngestStatus('loading')
+    setIngestError(null)
+    try {
+      const newRecipe = await ingestRecipe(ingestUrl.trim())
+      setRecipes((prev) => prev ? [newRecipe, ...prev] : [newRecipe])
+      setIngestUrl('')
+      setIngestStatus('success')
+      setTimeout(() => setIngestStatus('idle'), 3000)
+    } catch (e) {
+      setIngestError(String((e as Error).message ?? e))
+      setIngestStatus('error')
     }
   }
 
@@ -239,6 +278,14 @@ export function Setup({ onCreated, onManageKitchens, kitchensVersion }: Props) {
                   <div className="recipe-head">
                     <span className="icon">{r.icon}</span>
                     {isSelected && <span className="check">✓</span>}
+                    <button
+                      type="button"
+                      className="detail-btn"
+                      title="View recipe details"
+                      onClick={(e) => { e.stopPropagation(); setDetailId(r.id) }}
+                    >
+                      ⓘ
+                    </button>
                   </div>
                   <div className="title">{r.title}</div>
                   <div className="meta">
@@ -249,6 +296,44 @@ export function Setup({ onCreated, onManageKitchens, kitchensVersion }: Props) {
               )
             })}
           </ul>
+        )}
+
+        {backend === 'sqlite' && (
+          <div className="ingest-panel">
+            <button
+              type="button"
+              className="link"
+              onClick={() => setIngestOpen((o) => !o)}
+            >
+              {ingestOpen ? '▲ Hide' : '▼ Add a recipe by URL'}
+            </button>
+            {ingestOpen && (
+              <div className="ingest-form">
+                <input
+                  type="url"
+                  placeholder="https://example.com/recipe"
+                  value={ingestUrl}
+                  onChange={(e) => setIngestUrl(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleIngest() }}
+                  disabled={ingestStatus === 'loading'}
+                />
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={ingestStatus === 'loading' || !ingestUrl.trim()}
+                  onClick={handleIngest}
+                >
+                  {ingestStatus === 'loading' ? 'Fetching…' : 'Fetch'}
+                </button>
+                {ingestStatus === 'success' && (
+                  <p className="ingest-success">Recipe added!</p>
+                )}
+                {ingestStatus === 'error' && ingestError && (
+                  <p className="error">{ingestError}</p>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </section>
 
@@ -322,6 +407,43 @@ export function Setup({ onCreated, onManageKitchens, kitchensVersion }: Props) {
           {submitting ? 'Planning…' : `Start cooking (${selected.size})`}
         </button>
       </div>
+
+      {/* Recipe detail modal */}
+      {detailId !== null && (
+        <div className="modal-overlay" onClick={() => setDetailId(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setDetailId(null)}>✕</button>
+            {detailLoading && <p className="muted">Loading…</p>}
+            {detail && (
+              <>
+                <div className="modal-header">
+                  <span className="modal-icon">{detail.icon}</span>
+                  <div>
+                    <h2>{detail.title}</h2>
+                    {detail.found_in && <p className="muted">{detail.found_in}</p>}
+                  </div>
+                </div>
+                <div className="modal-meta">
+                  {detail.rating && <span>{detail.rating}</span>}
+                  <span className={detail.enriched ? 'badge badge-ok' : 'badge badge-warn'}>
+                    {detail.enriched ? `${detail.step_count} steps` : 'Not enriched'}
+                  </span>
+                </div>
+                {detail.ingredients.length > 0 && (
+                  <div className="modal-ingredients">
+                    <h3>Ingredients</h3>
+                    <ul>
+                      {detail.ingredients.map((ing, i) => (
+                        <li key={i}>{ing}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
