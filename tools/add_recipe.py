@@ -44,8 +44,14 @@ def _print_recipe(recipe: RecipeData) -> None:
 
 def _confirm() -> bool:
     try:
-        answer = input("Save recipe? [y/N]: ").strip().lower()
-    except EOFError:
+        if sys.stdin.isatty():
+            answer = input("Save recipe? [y/N]: ").strip().lower()
+        else:
+            with open("/dev/tty") as tty:
+                sys.stdout.write("Save recipe? [y/N]: ")
+                sys.stdout.flush()
+                answer = tty.readline().strip().lower()
+    except (EOFError, OSError):
         return False
     return answer in ("y", "yes")
 
@@ -54,13 +60,21 @@ def main():
     parser = argparse.ArgumentParser(
         description=(
             "Add a recipe to the Notion recipes database. "
-            "Pass a recipe URL, or one or more cookbook image files."
+            "Pass a recipe URL, one or more cookbook image files, or --text with a plain-text description."
         ),
     )
     parser.add_argument(
         "inputs",
-        nargs="+",
-        help="A recipe URL, or one or more image file paths.",
+        nargs="*",
+        help="A recipe URL, or one or more image file paths. Omit when using --text.",
+    )
+    parser.add_argument(
+        "--text",
+        metavar="TEXT_OR_PATH",
+        help=(
+            "Plain-text recipe description. Pass the text directly, a file path, "
+            "or '-' to read from stdin. Cannot be combined with URL or image inputs."
+        ),
     )
     parser.add_argument(
         "--source",
@@ -91,6 +105,17 @@ def main():
 
     load_dotenv()
 
+    # --- Validate mutual exclusion ---
+    if args.text and args.inputs:
+        print("Error: --text cannot be combined with URL or image inputs.", file=sys.stderr)
+        sys.exit(2)
+    if args.text and args.photo:
+        print("Error: --photo is only valid with image-based recipes, not --text.", file=sys.stderr)
+        sys.exit(2)
+    if not args.text and not args.inputs:
+        print("Error: provide a URL, image path(s), or --text.", file=sys.stderr)
+        sys.exit(2)
+
     urls = [a for a in args.inputs if _looks_like_url(a)]
     images = [a for a in args.inputs if not _looks_like_url(a)]
 
@@ -109,7 +134,24 @@ def main():
 
     image_paths_for_upload: list[str] = []
 
-    if urls:
+    if args.text:
+        raw = args.text
+        if raw == "-":
+            print("Reading recipe text from stdin...")
+            raw = sys.stdin.read()
+        elif os.path.isfile(raw):
+            with open(raw) as f:
+                raw = f.read()
+
+        from text_recipe import parse_recipe_from_text
+
+        print("Parsing recipe from text with Claude...")
+        try:
+            recipe = parse_recipe_from_text(raw, source=args.source)
+        except Exception as e:
+            print(f"Error parsing recipe from text: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif urls:
         if len(urls) > 1:
             print("Error: pass at most one URL.", file=sys.stderr)
             sys.exit(2)
